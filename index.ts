@@ -63,12 +63,14 @@ app.all('/player/login/dashboard', async (req: Request, res: Response) => {
 /*
 Login validate
 */
-app.all('/player/growid/login/validate', async (req: Request, res: Response) => {
+app.all('/player/growid/register/validate', async (req: Request, res: Response) => {
   try {
+
     const formData = req.body as Record<string, string>;
 
     const growId = formData.growId;
     const password = formData.password;
+    const email = formData.email || '';
 
     if (!growId || !password) {
       return res.json({
@@ -77,27 +79,30 @@ app.all('/player/growid/login/validate', async (req: Request, res: Response) => 
       });
     }
 
+    // token yang akan dikirim ke server C++
     const token = Buffer.from(
       `growId=${growId}&password=${password}`
     ).toString('base64');
 
-    console.log(`[LOGIN] ${growId}`);
+    console.log(`[REGISTER] ${growId}`);
 
     res.json({
       status: 'success',
-      message: 'Account Validated.',
+      message: 'Account Created.',
       token,
       url: '',
       accountType: 'growtopia'
     });
 
   } catch (error) {
-    console.log(`[ERROR]: ${error}`);
+
+    console.log(`[REGISTER ERROR]: ${error}`);
 
     res.json({
       status: 'error',
       message: 'Internal Server Error'
     });
+
   }
 });
 
