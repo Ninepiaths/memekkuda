@@ -70,7 +70,6 @@ app.all('/player/growid/register/validate', async (req: Request, res: Response) 
 
     const growId = formData.growId;
     const password = formData.password;
-    const email = formData.email || '';
 
     if (!growId || !password) {
       return res.json({
@@ -79,7 +78,6 @@ app.all('/player/growid/register/validate', async (req: Request, res: Response) 
       });
     }
 
-    // token yang akan dikirim ke server C++
     const token = Buffer.from(
       `growId=${growId}&password=${password}`
     ).toString('base64');
