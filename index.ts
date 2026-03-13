@@ -97,8 +97,8 @@ app.all(
         ).toString('base64');
       } else {
         token = Buffer.from(
-          `_token=${_token}&growId=${growId}&password=${password}&reg=0`,
-        ).toString('base64');
+  `growId=${growId}&password=${password}`,
+).toString('base64');
       }
 
       res.send(
