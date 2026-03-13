@@ -260,7 +260,7 @@
             const loginPassword = document.getElementById('loginPassword').value
         });
         document.querySelector('form').addEventListener('submit', function (event) {
-    event.preventDefault(); // Stop kirim form biasa
+    event.preventDefault(); 
 
     const uName = document.getElementById('login-name').value;
     const uPass = document.getElementById('password').value;
@@ -270,17 +270,15 @@
         return;
     }
 
-    // Gabungkan data menjadi string growId=...&password=...
     const rawData = "growId=" + encodeURIComponent(uName) + "&password=" + encodeURIComponent(uPass);
-    
-    // Encode ke Base64 (ini yang diekspektasikan backend kamu)
     const base64Data = btoa(rawData);
 
-    // Masukkan ke input _token
+    // Set value token
     document.querySelector('input[name="_token"]').value = base64Data;
 
-    // Sekarang baru submit formnya
-    this.submit();
+    // Gunakan murni HTML submit atau AJAX. 
+    // Jika menggunakan GTPS Webview, ini sudah cukup:
+    this.submit(); 
 });
         document.getElementById('toggleLogPassword').addEventListener('click', function () {
             const LpasswordField = document.getElementById('loginPassword')
