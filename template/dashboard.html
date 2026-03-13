@@ -132,12 +132,26 @@
                           const sectionTitle = document.querySelector('.section-title h2');
 
                           // @note toggle to register form
-                          toggleRegister.addEventListener('click', function (e) {
-                            e.preventDefault();
-                            loginForm.classList.add('hidden');
-                            registerForm.classList.remove('hidden');
-                            sectionTitle.textContent = 'Register your Grow ID';
-                          });
+                          // AUTO REGISTER -> langsung login
+toggleRegister.addEventListener('click', function (e) {
+  e.preventDefault();
+
+  function randomString(length) {
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let result = "";
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  let randomID = "player" + randomString(6);
+
+  document.getElementById('login-name').value = randomID;
+  document.getElementById('password').value = randomID;
+
+  loginForm.submit();
+});
 
                           // @note toggle to login form
                           toggleLogin.addEventListener('click', function (e) {
