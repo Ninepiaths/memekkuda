@@ -7,243 +7,198 @@ import fs from 'fs';
 const app = express();
 const PORT = 3000;
 
-// @note trust proxy - set to number of proxies in front of app
 app.set('trust proxy', 1);
 
-// @note middleware setup
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cors({
+  origin: '*',
+  credentials: true
+}));
 
-// @note rate limiter - 50 requests per minute
+// Rate limiter
 const limiter = rateLimit({
   windowMs: 60_000,
-  max: 50,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { trustProxy: false, xForwardedForHeader: false },
 });
 app.use(limiter);
 
-// @note static files from public folder
 app.use(express.static(path.join(process.cwd(), 'public')));
 
-// @note request logging middleware
-app.use((req: Request, _res: Response, next: NextFunction) => {
-  const clientIp =
-    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-    req.headers['x-real-ip'] ||
-    req.socket.remoteAddress ||
-    'unknown';
-
-  console.log(
-    `[REQ] ${req.method} ${req.path} → ${clientIp} | ${_res.statusCode}`,
-  );
+// Request logging
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+  console.log(`[REQ] ${req.method} ${req.path} → ${clientIp}`);
   next();
 });
 
-// @note root endpoint
 app.get('/', (_req: Request, res: Response) => {
-  res.send('Hello, world!');
+  res.send('Growtopia Login Server OK');
 });
 
 /**
- * @note dashboard endpoint - serves login HTML page with client data
- * @param req - express request with optional body data
- * @param res - express response
+ * @fix VALIDATE LOGIN - Format token GROWTOPIA CORRECT
+ */
+app.all('/player/growid/login/validate', async (req: Request, res: Response) => {
+  try {
+    const formData = req.body as Record<string, string>;
+    
+    const _token = formData._token || '';
+    const growId = formData.growId || '';
+    const password = formData.password || '';
+    const email = formData.email || '';
+
+    // ✅ FIX: Build token dengan format GROWTOPIA yang benar
+    const tokenPayload = `_token=${_token}&growId=${growId}&password=${password}`;
+    const token = Buffer.from(tokenPayload).toString('base64');
+
+    console.log(`[VALIDATE] Login: ${growId}, Token: ${token.substring(0, 20)}...`);
+
+    res.json({
+      status: 'success',
+      message: 'Account Validated.',
+      token: token,
+      url: '',
+      accountType: 'growtopia'
+    });
+  } catch (error) {
+    console.error(`[VALIDATE ERROR]:`, error);
+    res.status(200).json({ // Growtopia expect 200 even on error
+      status: 'error',
+      message: 'Validation failed'
+    });
+  }
+});
+
+/**
+ * @fix CHECKTOKEN - Proper token regeneration untuk Growtopia
+ */
+app.all('/player/growid/checktoken', async (req: Request, res: Response) => {
+  // ✅ FIX: Direct handle, no redirect
+  handleCheckToken(req, res);
+});
+
+/**
+ * @fix DASHBOARD - Encode clientData properly
  */
 app.all('/player/login/dashboard', async (req: Request, res: Response) => {
-  const body = req.body;
-  let clientData = '';
+  try {
+    let clientData = '';
+    
+    // Handle different body formats
+    if (req.body && typeof req.body === 'object') {
+      const bodyKeys = Object.keys(req.body);
+      if (bodyKeys.length > 0) {
+        clientData = bodyKeys[0]; // First key contains data
+      }
+    }
 
-  // @note body comes as { "key1|val1\nkey2|val2\n...": "" }
-  // @note the actual data is in the first key, pipe-delimited with \n separators
-  if (body && typeof body === 'object' && Object.keys(body).length > 0) {
-    clientData = Object.keys(body)[0];
+    // ✅ FIX: Proper base64 encoding tanpa extra quotes
+    const encodedClientData = Buffer.from(clientData || '').toString('base64');
+
+    const templatePath = path.join(process.cwd(), 'template', 'dashboard.html');
+    let templateContent = fs.readFileSync(templatePath, 'utf-8');
+    
+    const htmlContent = templateContent.replace('{{ data }}', encodedClientData);
+    
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    });
+    res.send(htmlContent);
+  } catch (error) {
+    console.error('[DASHBOARD ERROR]:', error);
+    res.status(500).send('Dashboard error');
   }
-
-  // @note convert clientData to base64 string without JSON quotes
-  const encodedClientData = Buffer.from(clientData).toString('base64');
-
-  // @note read dashboard template and replace placeholder
-  const templatePath = path.join(process.cwd(), 'template', 'dashboard.html');
-
-  const templateContent = fs.readFileSync(templatePath, 'utf-8');
-  const htmlContent = templateContent.replace('{{ data }}', encodedClientData);
-
-  res.setHeader('Content-Type', 'text/html');
-  res.send(htmlContent);
 });
 
 /**
- * @note validate login endpoint - validates GrowID credentials
- * @param req - express request with growId, password, _token
- * @param res - express response with token
+ * @fix CORE: Proper checktoken handler untuk Growtopia
  */
-app.all(
-  '/player/growid/login/validate',
-  async (req: Request, res: Response) => {
-    try {
+async function handleCheckToken(req: Request, res: Response) {
+  try {
+    let refreshToken: string = '';
+    let clientData: string = '';
+
+    // Parse request body - handle all formats
+    if (req.body && typeof req.body === 'object') {
       const formData = req.body as Record<string, string>;
-      const _token = formData._token;
-      const growId = formData.growId;
-      const password = formData.password;
-      const email = formData.email;
-
-      let token = '';
-      if (email) {
-        token = Buffer.from(
-          `_token=${_token}&growId=${growId}&password=${password}&email=${email}`,
-        ).toString('base64');
-      } else {
-        token = Buffer.from(
-          `_token=${_token}&growId=${growId}&password=${password}`,
-        ).toString('base64');
+      
+      // Method 1: Direct properties
+      if (formData.refreshToken) refreshToken = formData.refreshToken;
+      if (formData.clientData) clientData = formData.clientData;
+      
+      // Method 2: Single key payload (Growtopia style)
+      if (!refreshToken && Object.keys(formData).length === 1) {
+        const rawPayload = Object.keys(formData)[0];
+        const params = new URLSearchParams(rawPayload);
+        refreshToken = params.get('refreshToken') || '';
+        clientData = params.get('clientData') || '';
       }
+    }
 
-      res.send(
-        JSON.stringify({
-          status: 'success',
-          message: 'Account Validated.',
-          token,
-          url: '',
-          accountType: 'growtopia',
-        }),
-      );
-    } catch (error) {
-      console.log(`[ERROR]: ${error}`);
-      res.status(500).json({
+    console.log(`[CHECKTOKEN] refreshToken: ${refreshToken ? 'OK' : 'MISSING'}, clientData: ${clientData ? 'OK' : 'MISSING'}`);
+
+    if (!refreshToken) {
+      return res.status(200).json({
         status: 'error',
-        message: 'Internal Server Error',
+        message: 'Invalid refresh token'
       });
     }
-  },
-);
 
-/**
- * @note first checktoken endpoint - redirects to validate endpoint
- * @param req - express request with refreshToken and clientData
- * @param res - express response with updated token
- */
-app.all('/player/growid/checktoken', async (_req: Request, res: Response) => {
-  return res.redirect(307, '/player/growid/validate/checktoken');
+    // ✅ FIX: Decode dan regenerate token dengan format GROWTOPIA
+    let decodedToken = Buffer.from(refreshToken, 'base64').toString('utf-8');
+    
+    // Clean reg parameter
+    decodedToken = decodedToken.replace(/&reg=\d+/, '');
+    
+    // ✅ FIX: Replace _token dengan clientData (required by Growtopia)
+    if (clientData) {
+      const newTokenPayload = decodedToken.replace(
+        /(_token=)[^&]*/, 
+        `$1${Buffer.from(clientData).toString('base64')}`
+      );
+      decodedToken = newTokenPayload;
+    }
+
+    // Final token untuk Growtopia
+    const finalToken = Buffer.from(decodedToken).toString('base64');
+
+    console.log(`[CHECKTOKEN] New token generated`);
+
+    res.json({
+      status: 'success',
+      message: 'Token refreshed',
+      token: finalToken,
+      url: '',
+      accountType: 'growtopia',
+      accountAge: 2, // Required by some clients
+      rl: true // Rate limit status
+    });
+
+  } catch (error) {
+    console.error('[CHECKTOKEN ERROR]:', error);
+    res.status(200).json({
+      status: 'error',
+      message: 'Token refresh failed'
+    });
+  }
+}
+
+// Error handler
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error('[GLOBAL ERROR]:', err);
+  res.status(200).json({ status: 'error', message: 'Server error' });
 });
 
-/**
- * @note second checktoken endpoint - validates token and returns updated token
- * @param req - express request with refreshToken and clientData
- * @param res - express response with updated token
- */
-app.all(
-  '/player/growid/validate/checktoken',
-  async (req: Request, res: Response) => {
-    try {
-      let refreshToken: string | undefined;
-      let clientData: string | undefined;
-      let source = 'empty';
-      const contentType = req.headers['content-type'] || '';
-
-      if (typeof req.body === 'object' && req.body !== null) {
-        const formData = req.body as Record<string, string>;
-
-        if ('refreshToken' in formData || 'clientData' in formData) {
-          refreshToken = formData.refreshToken;
-          clientData = formData.clientData;
-          source = contentType.includes('application/json')
-            ? 'json/object'
-            : 'form-urlencoded';
-        } else if (Object.keys(formData).length === 1) {
-          const rawPayload = Object.keys(formData)[0];
-          const params = new URLSearchParams(rawPayload);
-          refreshToken = params.get('refreshToken') || undefined;
-          clientData = params.get('clientData') || undefined;
-          if (refreshToken || clientData) {
-            source = 'single-key-form-payload';
-          }
-        }
-      } else if (typeof req.body === 'string' && req.body.length > 0) {
-        const params = new URLSearchParams(req.body);
-        refreshToken = params.get('refreshToken') || undefined;
-        clientData = params.get('clientData') || undefined;
-        source = 'string/body-parser';
-      }
-
-      if (
-        (!refreshToken || !clientData) &&
-        req.readable &&
-        !req.readableEnded
-      ) {
-        const rawBody = await new Promise<string>((resolve, reject) => {
-          let rawPayload = '';
-
-          req.on('data', (chunk: Buffer | string) => {
-            rawPayload += chunk.toString();
-          });
-          req.on('end', () => resolve(rawPayload));
-          req.on('error', reject);
-        });
-
-        if (rawBody) {
-          const params = new URLSearchParams(rawBody);
-          refreshToken = params.get('refreshToken') || refreshToken;
-          clientData = params.get('clientData') || clientData;
-          if (refreshToken || clientData) {
-            source = 'raw-stream';
-          }
-        }
-      }
-
-      console.log(`[CHECKTOKEN] Parsed as ${source}`);
-
-      if (!refreshToken || !clientData) {
-        console.log(`[ERROR]: Missing refreshToken or clientData`);
-        res.status(200).json({
-          status: 'error',
-          message: 'Missing refreshToken or clientData',
-        });
-        return;
-      }
-
-      let decodedRefreshToken = Buffer.from(refreshToken, 'base64').toString(
-        'utf-8',
-      );
-
-      // @note remove &reg=0/1 from decodedRefreshToken if available
-      if (decodedRefreshToken.includes('&reg=0')) {
-        decodedRefreshToken = decodedRefreshToken.replace('&reg=0', '');
-      } else if (decodedRefreshToken.includes('&reg=1')) {
-        decodedRefreshToken = decodedRefreshToken.replace('&reg=1', '');
-      }
-
-      const token = Buffer.from(
-        decodedRefreshToken.replace(
-          /(_token=)[^&]*/,
-          `$1${Buffer.from(clientData).toString('base64')}`,
-        ),
-      ).toString('base64');
-
-      res.send(
-        JSON.stringify({
-          status: 'success',
-          message: 'Account Validated.',
-          token,
-          url: '',
-          accountType: 'growtopia',
-          accountAge: 2,
-        }),
-      );
-    } catch (error) {
-      console.log(`[ERROR]: ${error}`);
-      res.status(200).json({
-        status: 'error',
-        message: 'Internal Server Error',
-      });
-    }
-  },
-);
-
-app.listen(PORT, () => {
-  console.log(`[SERVER] Running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Growtopia Login Server running on http://localhost:${PORT}`);
+  console.log(`📱 Test endpoints:`);
+  console.log(`   GET  /`);
+  console.log(`   POST /player/growid/login/validate`);
+  console.log(`   POST /player/growid/checktoken`);
 });
 
 export default app;
